@@ -3,6 +3,7 @@
 
 #include "ui_isolator.h"
 #include <QFileDialog>
+#include <QSettings>
 
 class Isolator : public QMainWindow, private Ui::Isolator
 {
@@ -12,11 +13,13 @@ public:
     explicit Isolator(QWidget *parent = 0);
 
 protected:
+    void closeEvent(QCloseEvent *);
     void changeEvent(QEvent *e);
     void createDir(QString dir);
     void copyTo(QFileInfo file, QString subDir = QString("bin"), QString kName = QString());
+    void CreateSymLink(QFileInfo file, QString link);
     QFileInfoList getLibs(QFileInfo file);
-    void createStarter(QFileInfo file);
+    void createStarter(QString file);
 private slots:
     void on_isolate_clicked();
 
@@ -25,6 +28,7 @@ private slots:
 private:
     QFileInfoList applications;
     QString       outDir;
+    QSettings     *exclude;
 };
 
 #endif // ISOLATOR_H

@@ -7,6 +7,23 @@ Isolator::Isolator(QWidget *parent) :
     QMainWindow(parent)
 {
     setupUi(this);
+    exclude = new QSettings("Prime-Hack", "AppIsolator", this);
+
+    QString ex;
+    for (int i = 0; i < exclude->value("Count").toInt(); ++i)
+        ex += exclude->value(QString::number(i)).toString() + "\n";
+    if (ex.isEmpty())
+        ex = "libGL\nlibGLX\n";
+    excludeLibs->setPlainText(ex);
+}
+
+void Isolator::closeEvent(QCloseEvent *)
+{
+    QStringList ex = excludeLibs->toPlainText().split('\n');
+    exclude->setValue("Count", ex.count());
+
+    for (int i = 0; i < ex.count(); ++i)
+        exclude->setValue(QString::number(i), ex[i]);
 }
 
 void Isolator::changeEvent(QEvent *e)
@@ -52,8 +69,32 @@ void Isolator::copyTo(QFileInfo file, QString subDir, QString kName)
     cp.waitForStarted();
     cp.waitForFinished(-1);
 
-    if (subDir == "lib/" && file.suffix().toLower() != "so") // TODO: Change ti spawn process 'ln'
-        copyTo(QFileInfo(file.path() + "/" + file.completeBaseName()), "lib", file.filePath());
+//    if (subDir == "lib/" && file.suffix().toLower() != "so") // TODO: Change ti spawn process 'ln'
+//        copyTo(QFileInfo(file.path() + "/" + file.completeBaseName()), "lib", file.filePath());
+    if (subDir == "lib/" && file.suffix().toLower() != "so")
+        CreateSymLink(outDir + "/" + case_name->text() + "/" + subDir + file.fileName(), file.completeBaseName());
+}
+
+void Isolator::CreateSymLink(QFileInfo file, QString link)
+{
+    if (link.at(0) != '/')
+        link = file.path() + "/" + link;
+
+    QProcess ln;
+    QStringList args;
+
+    args << file.filePath();
+    args << link;
+
+    ln.setProgram("ln");
+    ln.setArguments(args);
+
+    ln.start();
+    ln.waitForStarted();
+    ln.waitForFinished();
+
+    if (file.completeSuffix().indexOf("so") == 0 && file.completeSuffix() != file.suffix())
+        CreateSymLink(QFileInfo(link), file.path() + "/" + file.completeBaseName());
 }
 
 QFileInfoList Isolator::getLibs(QFileInfo file)
@@ -68,7 +109,6 @@ QFileInfoList Isolator::getLibs(QFileInfo file)
     ldd.waitForFinished(-1);
 
     QString out = ldd.readAllStandardOutput().toStdString().c_str();
-    qDebug() << "getLibs():" << out;
     QStringList outList = out.split('\n');
     QRegExp re(R"(.*\s(\/.*)\s\(0x[\da-fA-F]+\))", Qt::CaseInsensitive);
     QFileInfoList libs;
@@ -84,15 +124,15 @@ QFileInfoList Isolator::getLibs(QFileInfo file)
     return libs;
 }
 
-void Isolator::createStarter(QFileInfo file)
+void Isolator::createStarter(QString file)
 {
-    QFile starter(file.filePath() + ".sh");
+    QFile starter(outDir + "/" + case_name->text() + "/bin/" + file + ".sh");
     starter.open(QIODevice::WriteOnly);
 
     starter.write("#!/bin/bash\n");
-    starter.write(QString("export LD_LIBRARY_PATH='" + outDir + "/" + case_name->text() + "/lib'\n").toStdString().c_str());
-    starter.write(QString("export PATH='" + outDir + "/" + case_name->text() + "/bin':$PATH\n").toStdString().c_str());
-    starter.write(QString("'" + file.filePath() + "'\n").toStdString().c_str());
+    starter.write(QString("export LD_LIBRARY_PATH='../lib'\n").toStdString().c_str());
+    starter.write(QString("export PATH='../bin':$PATH\n").toStdString().c_str());
+    starter.write(QString("'" + file + "'\n").toStdString().c_str());
 
     starter.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner |
                            QFileDevice::ReadGroup | QFileDevice::ExeGroup | QFileDevice::ReadUser |
@@ -107,15 +147,25 @@ void Isolator::on_isolate_clicked()
         applications.push_back(QFileInfo(app));
     outDir = QFileDialog::getExistingDirectory(this, "Select directory for case", QDir::homePath());
     createDir(outDir + "/" + case_name->text());
+    if (excludeLibs->toPlainText().at(excludeLibs->toPlainText().length() -1) != '\n')
+        excludeLibs->setPlainText(excludeLibs->toPlainText() + "\n");
+    QStringList ex = excludeLibs->toPlainText().split('\n');
 
     // TODO: Create desktop file
     for (auto app : applications){
         copyTo(app);
-        createStarter(QFileInfo( outDir + "/" + case_name->text() + "/bin/" + app.fileName()));
+        createStarter(app.fileName());
         // TODO: Add starter to desktop as action
         QFileInfoList libs = getLibs(app);
-        for (auto lib : libs)
-            copyTo(lib, "lib");
+        for (auto lib : libs){
+            bool copy = true;
+            for (auto str : ex)
+                if (!str.isEmpty())
+                    if (lib.fileName().indexOf(str) != -1)
+                        copy = false;
+            if (copy)
+                copyTo(lib, "lib");
+        }
     }
 }
 
