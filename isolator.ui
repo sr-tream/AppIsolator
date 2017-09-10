@@ -70,13 +70,29 @@
      </widget>
     </item>
     <item row="3" column="0" colspan="2">
-     <widget class="QPushButton" name="isolate">
-      <property name="enabled">
+     <widget class="QSplitter" name="splitter">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
+      </property>
+      <property name="childrenCollapsible">
        <bool>false</bool>
       </property>
-      <property name="text">
-       <string>Isolate</string>
-      </property>
+      <widget class="QPushButton" name="isolate">
+       <property name="enabled">
+        <bool>false</bool>
+       </property>
+       <property name="text">
+        <string>Isolate</string>
+       </property>
+      </widget>
+      <widget class="QProgressBar" name="progressBar">
+       <property name="maximum">
+        <number>100</number>
+       </property>
+       <property name="value">
+        <number>0</number>
+       </property>
+      </widget>
      </widget>
     </item>
    </layout>

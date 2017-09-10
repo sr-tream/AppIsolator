@@ -7,6 +7,7 @@ Isolator::Isolator(QWidget *parent) :
     QMainWindow(parent)
 {
     setupUi(this);
+    progressBar->setHidden(true);
     exclude = new QSettings("Prime-Hack", "AppIsolator", this);
 
     QString ex;
@@ -20,6 +21,9 @@ Isolator::Isolator(QWidget *parent) :
 void Isolator::closeEvent(QCloseEvent *)
 {
     QStringList ex = excludeLibs->toPlainText().split('\n');
+    while (true)
+        if (!ex.removeOne(""))
+            break;
     exclude->setValue("Count", ex.count());
 
     for (int i = 0; i < ex.count(); ++i)
@@ -48,7 +52,7 @@ void Isolator::createDir(QString dir)
     mkdir.waitForFinished(-1);
 }
 
-void Isolator::copyTo(QFileInfo file, QString subDir, QString kName)
+void Isolator::copyTo(QFileInfo file, QString subDir, QString newName)
 {
     if (subDir.at(subDir.length() - 1) != '/')
         subDir += '/';
@@ -56,10 +60,10 @@ void Isolator::copyTo(QFileInfo file, QString subDir, QString kName)
     QProcess cp;
     QStringList args;
 
-    if (kName.isEmpty())
-        args << file.filePath();
-    else args << kName;
-    args << outDir + "/" + case_name->text() + "/" + subDir + file.fileName();
+    args << file.filePath();
+    if (newName.isEmpty())
+        args << outDir + "/" + case_name->text() + "/" + subDir + file.fileName();
+    else args << outDir + "/" + case_name->text() + "/" + subDir + newName;
     createDir(outDir + "/" + case_name->text() + "/" + subDir);
 
     cp.setProgram("cp");
@@ -68,36 +72,9 @@ void Isolator::copyTo(QFileInfo file, QString subDir, QString kName)
     cp.start();
     cp.waitForStarted();
     cp.waitForFinished(-1);
-
-//    if (subDir == "lib/" && file.suffix().toLower() != "so") // TODO: Change ti spawn process 'ln'
-//        copyTo(QFileInfo(file.path() + "/" + file.completeBaseName()), "lib", file.filePath());
-    if (subDir == "lib/" && file.suffix().toLower() != "so")
-        CreateSymLink(outDir + "/" + case_name->text() + "/" + subDir + file.fileName(), file.completeBaseName());
 }
 
-void Isolator::CreateSymLink(QFileInfo file, QString link)
-{
-    if (link.at(0) != '/')
-        link = file.path() + "/" + link;
-
-    QProcess ln;
-    QStringList args;
-
-    args << file.filePath();
-    args << link;
-
-    ln.setProgram("ln");
-    ln.setArguments(args);
-
-    ln.start();
-    ln.waitForStarted();
-    ln.waitForFinished();
-
-    if (file.completeSuffix().indexOf("so") == 0 && file.completeSuffix() != file.suffix())
-        CreateSymLink(QFileInfo(link), file.path() + "/" + file.completeBaseName());
-}
-
-QFileInfoList Isolator::getLibs(QFileInfo file)
+LibList Isolator::getLibs(QFileInfo file)
 {
     QProcess ldd;
 
@@ -110,14 +87,21 @@ QFileInfoList Isolator::getLibs(QFileInfo file)
 
     QString out = ldd.readAllStandardOutput().toStdString().c_str();
     QStringList outList = out.split('\n');
-    QRegExp re(R"(.*\s(\/.*)\s\(0x[\da-fA-F]+\))", Qt::CaseInsensitive);
-    QFileInfoList libs;
+    QRegExp re(R"(\s*(.*)\s=>\s(\/.*)\s\(0x[\da-fA-F]+\))", Qt::CaseInsensitive);
+    LibList libs;
 
     for(auto str : outList){
         if (re.indexIn(str) == 0){
-            if (QFileInfo(re.cap(1)).isSymLink())
-                libs.push_back(QFileInfo(re.cap(1)).symLinkTarget());
-            else libs.push_back(QFileInfo(re.cap(1)));
+            Lib lib;
+            lib.second = re.cap(1);
+            if (lib.second.indexOf('\t') == 0)
+                lib.second.remove('\t');
+
+            if (QFileInfo(re.cap(2)).isSymLink())
+                lib.first = QFileInfo(re.cap(2)).symLinkTarget();
+            else lib.first = QFileInfo(re.cap(2));
+
+            libs.push_back(lib);
         }
     }
 
@@ -130,8 +114,8 @@ void Isolator::createStarter(QString file)
     starter.open(QIODevice::WriteOnly);
 
     starter.write("#!/bin/bash\n");
-    starter.write(QString("export LD_LIBRARY_PATH='../lib'\n").toStdString().c_str());
-    starter.write(QString("export PATH='../bin':$PATH\n").toStdString().c_str());
+    starter.write(QString("export LD_LIBRARY_PATH=${0%${0##*/}}'../lib'\n").toStdString().c_str());
+    starter.write(QString("export PATH=${0%${0##*/}}:$PATH\n").toStdString().c_str());
     starter.write(QString("'" + file + "'\n").toStdString().c_str());
 
     starter.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner |
@@ -143,30 +127,41 @@ void Isolator::createStarter(QString file)
 void Isolator::on_isolate_clicked()
 {
     QStringList apps = QFileDialog::getOpenFileNames(this, "Select files", "/usr/bin/");
-    for(auto app : apps)
+    LibList libs;
+    for(auto app : apps){
         applications.push_back(QFileInfo(app));
+        LibList appLibs = getLibs(app);
+        for (auto lib : appLibs)
+            libs.push_back(lib);
+    }
+
+    progressBar->setMaximum(apps.count() + libs.count());
+    progressBar->setHidden(false);
+
     outDir = QFileDialog::getExistingDirectory(this, "Select directory for case", QDir::homePath());
     createDir(outDir + "/" + case_name->text());
-    if (excludeLibs->toPlainText().at(excludeLibs->toPlainText().length() -1) != '\n')
-        excludeLibs->setPlainText(excludeLibs->toPlainText() + "\n");
     QStringList ex = excludeLibs->toPlainText().split('\n');
 
     // TODO: Create desktop file
     for (auto app : applications){
         copyTo(app);
         createStarter(app.fileName());
+        progressBar->setValue(progressBar->value() + 1);
         // TODO: Add starter to desktop as action
-        QFileInfoList libs = getLibs(app);
-        for (auto lib : libs){
-            bool copy = true;
-            for (auto str : ex)
-                if (!str.isEmpty())
-                    if (lib.fileName().indexOf(str) != -1)
-                        copy = false;
-            if (copy)
-                copyTo(lib, "lib");
-        }
     }
+
+    for (auto lib : libs){
+        bool copy = true;
+        for (auto str : ex)
+            if (!str.isEmpty())
+                if (lib.first.fileName().indexOf(str) != -1)
+                    copy = false;
+        if (copy)
+            copyTo(lib.first, "lib", lib.second);
+        progressBar->setValue(progressBar->value() + 1);
+    }
+
+    case_name->setText("");
 }
 
 void Isolator::on_case_name_textChanged(const QString &arg1)
@@ -174,6 +169,11 @@ void Isolator::on_case_name_textChanged(const QString &arg1)
     if (!arg1.isEmpty())
         isolate->setEnabled(true);
     else isolate->setEnabled(false);
+}
 
+void Isolator::on_case_name_textEdited(const QString &arg1)
+{
     case_name->setText(QString(arg1).replace('/', '\\'));
+    progressBar->setValue(0);
+    progressBar->setVisible(false);
 }
