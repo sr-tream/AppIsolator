@@ -114,9 +114,9 @@ void Isolator::createStarter(QString file)
     starter.open(QIODevice::WriteOnly);
 
     starter.write("#!/bin/bash\n");
-    starter.write(QString("export LD_LIBRARY_PATH=${0%${0##*/}}'../lib'\n").toStdString().c_str());
-    starter.write(QString("export PATH=${0%${0##*/}}:$PATH\n").toStdString().c_str());
-    starter.write(QString("'" + file + "'\n").toStdString().c_str());
+    starter.write("export LD_LIBRARY_PATH=${0%${0##*/}}'../lib'\n");
+    starter.write("export PATH=${0%${0##*/}}:$PATH\n");
+    starter.write("${0%'.sh'}\n");
 
     starter.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner |
                            QFileDevice::ReadGroup | QFileDevice::ExeGroup | QFileDevice::ReadUser |
